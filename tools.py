@@ -1,5 +1,6 @@
 from datetime import datetime
 import xml.etree.ElementTree as ET
+import re
 import requests
 
 
@@ -14,22 +15,89 @@ def get_city_weather(city):
 
 
 def get_live_cricket_scores(team=None):
-    url = "https://static.cricinfo.com/rss/livescores.xml"
+    # Map full names & abbreviations so filtering works either way
+    team_aliases = {
+        "india": ["india", "ind"],
+        "australia": ["australia", "aus"],
+        "england": ["england", "eng"],
+        "new zealand": ["new zealand", "nz"],
+        "south africa": ["south africa", "sa", "rsa"],
+        "pakistan": ["pakistan", "pak"],
+        "sri lanka": ["sri lanka", "sl"],
+        "west indies": ["west indies", "wi"],
+        "bangladesh": ["bangladesh", "ban"],
+        "afghanistan": ["afghanistan", "afg"],
+        "zimbabwe": ["zimbabwe", "zim"],
+        "ireland": ["ireland", "ire"],
+    }
+
+    international_keywords = [
+        "india", "australia", "england", "new zealand", "south africa",
+        "pakistan", "sri lanka", "west indies", "bangladesh", "afghanistan",
+        "zimbabwe", "ireland", "ind", "aus", "eng", "nz", "sa", "rsa",
+        "pak", "sl", "wi", "ban", "afg", "ipl", "world cup", "t20i", "odi", "test"
+    ]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    all_scores = []
+
+    # 1. Try Cricbuzz Live Scores (captures International + League + Status clearly)
     try:
-        response = requests.get(url, timeout=10)
-        root = ET.fromstring(response.content)
-        scores = [item.find("title").text for item in root.findall(".//item")]
+        cb_resp = requests.get("https://www.cricbuzz.com/cricket-match/live-scores", headers=headers, timeout=10)
+        # Extract match titles and live score snippets from Cricbuzz HTML
+        matches = re.findall(r'title="([^"]+ vs [^"]+, [^"]+)"', cb_resp.text)
+        for m in dict.fromkeys(matches):
+            all_scores.append(m)
+    except Exception:
+        pass
 
-        if team:
-            scores = [s for s in scores if team.lower() in s.lower()]
-
-        if not scores:
-            return f"No live cricket matches found{f' for {team}' if team else ''}."
-
-        return "\n".join(scores[:10])
+    # 2. Also fetch ESPNcricinfo RSS feed for live numeric scorelines
+    try:
+        rss_resp = requests.get("https://static.cricinfo.com/rss/livescores.xml", headers=headers, timeout=10)
+        root = ET.fromstring(rss_resp.content)
+        for item in root.findall(".//item"):
+            title = item.find("title").text
+            if title and title not in all_scores:
+                all_scores.append(title)
     except Exception as e:
-        return f"Error fetching cricket scores: {e}"
+        if not all_scores:
+            return f"Error fetching cricket scores: {e}"
 
+    if not all_scores:
+        return "No live cricket matches found right now."
+
+    # Filter if user asked for a specific team
+    if team:
+        t_lower = team.lower().strip()
+        search_terms = team_aliases.get(t_lower, [t_lower])
+        filtered = [
+            s for s in all_scores
+            if any(re.search(rf"\b{re.escape(term)}\b", s.lower()) for term in search_terms)
+        ]
+        if not filtered:
+            return f"No live match currently running for '{team}'. Active matches:\n" + "\n".join(all_scores[:8])
+        return "\n".join(filtered[:10])
+
+    # Sort so International matches appear BEFORE domestic matches
+    def is_international(score_str):
+        s_low = score_str.lower()
+        return any(re.search(rf"\b{re.escape(kw)}\b", s_low) for kw in international_keywords)
+
+    intl_matches = [s for s in all_scores if is_international(s)]
+    domestic_matches = [s for s in all_scores if not is_international(s)]
+
+    combined = []
+    if intl_matches:
+        combined.append("International / Major Matches:")
+        combined.extend(intl_matches[:10])
+    if domestic_matches:
+        combined.append("\nDomestic Matches:")
+        combined.extend(domestic_matches[:5])
+
+    return "\n".join(combined)
 
 #TOOLS = [{}, {}, {}]
 TOOLS = [
