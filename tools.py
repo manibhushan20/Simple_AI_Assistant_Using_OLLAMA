@@ -1,7 +1,10 @@
 from datetime import datetime
+from Utilities.utilities import log
 import xml.etree.ElementTree as ET
 import re
 import requests
+import json
+
 
 
 def get_current_time():
@@ -11,6 +14,7 @@ def get_current_time():
 def get_city_weather(city):
     url = f"https://wttr.in/{city}?format=3"
     response = requests.get(url, timeout=10)
+    response.raise_for_status()  # Raise an error for bad responses
     return response.text
 
 
@@ -122,6 +126,7 @@ TOOLS = [
                         "description" : "City to get the weather for.",
                     }
                 },
+                "required":["city"]
             },
         },
     },
@@ -137,7 +142,7 @@ TOOLS = [
                         "type" : "string",
                         "description" : "Optional team name to filter live scores (e.g., 'India', 'Australia', 'CSK').",
                     }
-                },
+                }
             },
         },
     }
@@ -149,3 +154,17 @@ FUNCTION_NAME_TO_FUNCTION_MAP = {
     "get_city_weather" : get_city_weather,
     "get_live_cricket_scores" : get_live_cricket_scores,
 }
+
+
+def run_tool(tool_call):
+    func_name = tool_call.function.name
+    try:
+        func_args = json.loads(tool_call.function.arguments or "{}")
+        log(f"{func_name} called with arguments: {func_args}")
+        fn = FUNCTION_NAME_TO_FUNCTION_MAP[func_name]
+        result = fn(**func_args)
+    except Exception as e:
+        result = f"Error calling function {func_name}: {str(e)}"
+    
+    log(f"{result}")
+    return result
